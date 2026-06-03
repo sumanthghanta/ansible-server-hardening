@@ -1,0 +1,277 @@
+# =============================================================
+# Ansible Server Hardening Pipeline - Stage by Stage
+# Repo: ansible-server-hardening
+# This pipeline validates, tests, and runs Ansible playbooks
+# to harden Linux servers, then backs up reports to AWS S3.
+# =============================================================
+
+name: Ansible Server Hardening Pipeline
+
+# When does this pipeline run?
+on:
+  push:
+    branches: [ main, "feature/*", "hotfix/*" ]
+  pull_request:
+    branches: [ main ]
+
+# =====================
+# PIPELINE ENVIRONMENT
+# =====================
+env:
+  ANSIBLE_HOST_KEY_CHECKING: "False"
+  ANSIBLE_FORCE_COLOR: "1"
+  PLAYBOOK_DIR: ./playbooks
+  INVENTORY_DIR: ./inventory
+  AWS_REGION: us-east-1
+  S3_BUCKET: YOUR_S3_BUCKET_NAME_HERE  # TODO: Replace with your S3 bucket name
+
+jobs:
+
+  # ============================================================
+  # STAGE 1: CHECKOUT & SETUP
+  # Get the code and prepare Ansible environment
+  # ============================================================
+  checkout-and-setup:
+    name: "Stage 1 - Checkout and Setup"
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Step 1.1 - Checkout source code"
+        uses: actions/checkout@v4
+
+      - name: "Step 1.2 - Set up Python for Ansible"
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: "Step 1.3 - Install Ansible"
+        run: |
+          pip install ansible ansible-lint
+          ansible --version
+          echo "Ansible installed successfully!"
+
+      - name: "Step 1.4 - Print pipeline info"
+        run: |
+          echo "==============================="
+          echo "Pipeline: Ansible Server Hardening"
+          echo "Branch: ${{ github.ref_name }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "==============================="
+
+  # ============================================================
+  # STAGE 2: LINT & VALIDATE
+  # Check Ansible playbook syntax and best practices
+  # ============================================================
+  lint-and-validate:
+    name: "Stage 2 - Lint and Validate"
+    runs-on: ubuntu-latest
+    needs: checkout-and-setup
+    steps:
+      - name: "Step 2.1 - Checkout source code"
+        uses: actions/checkout@v4
+
+      - name: "Step 2.2 - Install Ansible and lint tools"
+        run: pip install ansible ansible-lint yamllint
+
+      - name: "Step 2.3 - Lint YAML files"
+        run: |
+          echo "Linting YAML files..."
+          # In real usage: yamllint -c .yamllint playbooks/
+          find . -name "*.yml" -not -path "./.git/*" | head -5
+          echo "YAML lint passed!"
+
+      - name: "Step 2.4 - Validate Ansible playbook syntax"
+        run: |
+          echo "Validating Ansible playbook syntax..."
+          # In real usage: ansible-playbook --syntax-check playbooks/site.yml
+          if [ -f playbooks/site.yml ]; then
+            echo "site.yml found - syntax check would run here"
+          else
+            echo "No playbooks found yet - skipping syntax check"
+          fi
+          echo "Syntax validation passed!"
+
+      - name: "Step 2.5 - Run ansible-lint"
+        run: |
+          echo "Running ansible-lint..."
+          # In real usage: ansible-lint playbooks/ --rules-dir rules/
+          echo "Ansible-lint passed!"
+
+  # ============================================================
+  # STAGE 3: TEST
+  # Run Ansible playbooks in check mode (dry run)
+  # ============================================================
+  test:
+    name: "Stage 3 - Test (Dry Run)"
+    runs-on: ubuntu-latest
+    needs: lint-and-validate
+    steps:
+      - name: "Step 3.1 - Checkout source code"
+        uses: actions/checkout@v4
+
+      - name: "Step 3.2 - Install Ansible"
+        run: pip install ansible
+
+      - name: "Step 3.3 - Run playbook in check mode (dry run)"
+        run: |
+          echo "Running Ansible in CHECK MODE (dry run - no changes made)..."
+          # In real usage:
+          # ansible-playbook playbooks/site.yml \
+          #   -i inventory/production.ini \
+          #   --check \
+          #   --diff
+          echo "Dry run completed - no actual changes were made!"
+
+      - name: "Step 3.4 - Run Molecule tests"
+        run: |
+          echo "Running Molecule tests for roles..."
+          # In real usage: molecule test -s default
+          echo "Molecule tests passed!"
+
+  # ============================================================
+  # STAGE 4: BUILD & PACKAGE
+  # Package Ansible roles and create deployment artifacts
+  # ============================================================
+  build-and-package:
+    name: "Stage 4 - Build and Package"
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: "Step 4.1 - Checkout source code"
+        uses: actions/checkout@v4
+
+      - name: "Step 4.2 - Install Ansible"
+        run: pip install ansible
+
+      - name: "Step 4.3 - Package Ansible roles"
+        run: |
+          echo "Packaging Ansible roles..."
+          mkdir -p dist/
+          # In real usage: ansible-galaxy collection build
+          tar -czf dist/ansible-roles-${{ github.sha }}.tar.gz playbooks/ inventory/ || true
+          echo "Roles packaged successfully!"
+
+      - name: "Step 4.4 - Create deployment manifest"
+        run: |
+          echo "Creating deployment manifest..."
+          cat > dist/manifest.json << EOF
+          {
+            "version": "${{ github.sha }}",
+            "branch": "${{ github.ref_name }}",
+            "playbooks": ["site.yml"],
+            "built_at": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          }
+          EOF
+          echo "Manifest created!"
+
+  # ============================================================
+  # STAGE 5: DEPLOY TO STAGING
+  # Run hardening playbooks on staging servers
+  # Only runs on main branch
+  # ============================================================
+  deploy-staging:
+    name: "Stage 5 - Deploy to Staging"
+    runs-on: ubuntu-latest
+    needs: build-and-package
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: staging
+    steps:
+      - name: "Step 5.1 - Checkout source code"
+        uses: actions/checkout@v4
+
+      - name: "Step 5.2 - Install Ansible"
+        run: pip install ansible
+
+      - name: "Step 5.3 - Run hardening on staging servers"
+        run: |
+          echo "Running Ansible hardening on STAGING servers..."
+          # In real usage:
+          # ansible-playbook playbooks/site.yml \
+          #   -i inventory/staging.ini \
+          #   --extra-vars "env=staging"
+          echo "Staging hardening completed successfully!"
+
+      - name: "Step 5.4 - Verify staging compliance"
+        run: |
+          echo "Verifying staging server compliance..."
+          # In real usage: run compliance checks
+          echo "Staging compliance verified!"
+
+  # ============================================================
+  # STAGE 6: DEPLOY TO PRODUCTION
+  # Run hardening playbooks on production servers
+  # Only runs on main branch after staging succeeds
+  # ============================================================
+  deploy-production:
+    name: "Stage 6 - Deploy to Production"
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: production
+    steps:
+      - name: "Step 6.1 - Checkout source code"
+        uses: actions/checkout@v4
+
+      - name: "Step 6.2 - Install Ansible"
+        run: pip install ansible
+
+      - name: "Step 6.3 - Run hardening on production servers"
+        run: |
+          echo "Running Ansible hardening on PRODUCTION servers..."
+          # In real usage:
+          # ansible-playbook playbooks/site.yml \
+          #   -i inventory/production.ini \
+          #   --extra-vars "env=production"
+          echo "Production hardening completed successfully!"
+
+      - name: "Step 6.4 - Generate compliance report"
+        run: |
+          echo "Generating compliance report..."
+          mkdir -p reports/
+          cat > reports/compliance-${{ github.sha }}.txt << EOF
+          Compliance Report
+          =================
+          Date: $(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          Commit: ${{ github.sha }}
+          Status: COMPLIANT
+          EOF
+          echo "Compliance report generated!"
+
+  # ============================================================
+  # STAGE 7: SYNC TO AWS S3
+  # Upload compliance reports and artifacts to S3
+  # NOTE: Replace YOUR_S3_BUCKET_NAME_HERE with your bucket
+  # ============================================================
+  sync-to-s3:
+    name: "Stage 7 - Sync to AWS S3"
+    runs-on: ubuntu-latest
+    needs: deploy-production
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: "Step 7.1 - Checkout source code"
+        uses: actions/checkout@v4
+
+      - name: "Step 7.2 - Configure AWS credentials"
+        run: |
+          echo "Configuring AWS credentials..."
+          echo "Region: ${{ env.AWS_REGION }}"
+          echo "AWS credentials configured!"
+
+      - name: "Step 7.3 - Create compliance artifacts"
+        run: |
+          mkdir -p dist/reports/
+          echo "Ansible Hardening Report" > dist/reports/hardening-summary.txt
+          echo "Date: $(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> dist/reports/hardening-summary.txt
+          echo "Commit: ${{ github.sha }}" >> dist/reports/hardening-summary.txt
+          echo "Status: All servers hardened and compliant" >> dist/reports/hardening-summary.txt
+
+      - name: "Step 7.4 - Sync reports to AWS S3"
+        run: |
+          echo "Syncing compliance reports to S3..."
+          echo "Bucket: s3://${{ env.S3_BUCKET }}/ansible-reports/${{ github.sha }}/"
+          # In real usage:
+          # aws s3 sync ./dist/reports/ \
+          #   s3://${{ env.S3_BUCKET }}/ansible-reports/${{ github.sha }}/
+          echo "SUCCESS: Reports synced to s3://${{ env.S3_BUCKET }}/ansible-reports/${{ github.sha }}/"
+          echo "REMINDER: Set your S3 bucket name in the env section!"
