@@ -1,0 +1,44 @@
+---
+# ==============================================================
+# Group Variables for Server Hardening (applies to all hosts)
+# ==============================================================
+# These variables control the security compliance baseline.
+# Override per-host in inventory/host_vars/ as needed.
+
+# --- SSH Hardening ---
+ssh_permit_root_login: "no"
+ssh_password_authentication: "no"
+ssh_max_auth_tries: 3
+ssh_client_alive_interval: 300
+ssh_client_alive_count_max: 2
+ssh_allowed_users:
+  - deploy
+  - admin
+
+# --- Password Policy (CIS Benchmark aligned) ---
+password_max_age: 90
+password_min_age: 7
+password_min_length: 14
+password_warn_age: 7
+password_remember: 5
+
+# --- Firewall (UFW) ---
+firewall_enabled: true
+firewall_default_incoming: deny
+firewall_default_outgoing: allow
+firewall_allowed_ports:
+  - 22
+  - 80
+  - 443
+
+# --- Audit & Compliance ---
+auditd_enabled: true
+compliance_profile: "cis_level_1"
+fail2ban_enabled: true
+fail2ban_bantime: 3600
+fail2ban_maxretry: 5
+
+# --- Kernel Security (sysctl) ---
+kernel_disable_ip_forward: true
+kernel_disable_source_routing: true
+kernel_enable_aslr: true
