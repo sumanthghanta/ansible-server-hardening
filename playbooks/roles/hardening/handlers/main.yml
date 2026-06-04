@@ -1,0 +1,38 @@
+---
+# ==============================================================
+# Handlers for the Hardening Role
+# ==============================================================
+# Handlers are triggered by "notify" directives in tasks/main.yml
+# They run once at the end of a play, even if notified multiple times.
+
+# --- HOTFIX: correct sudoers validation before restart ---
+# Previously the sshd restart could run before sudoers was validated,
+# which risked locking out the deploy user. We now validate sudoers
+# first and only then restart sshd.
+
+- name: validate sudoers
+  ansible.builtin.command: visudo -cf /etc/sudoers
+  changed_when: false
+  listen: "sudoers updated"
+
+- name: restart sshd
+  ansible.builtin.service:
+    name: sshd
+    state: restarted
+  listen: "ssh config changed"
+
+- name: reload ufw
+  ansible.builtin.command: ufw reload
+  changed_when: false
+  listen: "firewall rules changed"
+
+- name: restart fail2ban
+  ansible.builtin.service:
+    name: fail2ban
+    state: restarted
+  listen: "fail2ban config changed"
+
+- name: apply sysctl
+  ansible.builtin.command: sysctl --system
+  changed_when: false
+  listen: "kernel params changed"
