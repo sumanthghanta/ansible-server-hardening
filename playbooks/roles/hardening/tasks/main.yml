@@ -1,0 +1,152 @@
+---
+# =============================================================
+# Ansible Role: Server Hardening Tasks
+# This role applies security hardening configurations
+# =============================================================
+
+# ==============================
+# 1. Update and patch the system
+# ==============================
+- name: "1. Update all packages to latest version"
+  ansible.builtin.package:
+    name: "*"
+    state: latest
+  tags: [update, patch]
+
+# ==============================
+# 2. SSH Hardening
+# ==============================
+- name: "2. Harden SSH configuration"
+  ansible.builtin.template:
+    src: sshd_config.j2
+    dest: /etc/ssh/sshd_config
+    owner: root
+    group: root
+    mode: "0600"
+    validate: "/usr/sbin/sshd -t -f %s"
+  notify: restart sshd
+  tags: [ssh, hardening]
+
+- name: "2a. Disable SSH root login"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^PermitRootLogin"
+    line: "PermitRootLogin no"
+    state: present
+  notify: restart sshd
+  tags: [ssh, hardening]
+
+- name: "2b. Disable SSH password authentication"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^PasswordAuthentication"
+    line: "PasswordAuthentication no"
+    state: present
+  notify: restart sshd
+  tags: [ssh, hardening]
+
+- name: "2c. Set SSH MaxAuthTries"
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "^MaxAuthTries"
+    line: "MaxAuthTries 3"
+    state: present
+  notify: restart sshd
+  tags: [ssh, hardening]
+
+# ==============================
+# 3. Password Policy
+# ==============================
+- name: "3. Configure password aging policy"
+  ansible.builtin.lineinfile:
+    path: /etc/login.defs
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+  loop:
+    - { regexp: "^PASS_MAX_DAYS", line: "PASS_MAX_DAYS   90" }
+    - { regexp: "^PASS_MIN_DAYS", line: "PASS_MIN_DAYS   1" }
+    - { regexp: "^PASS_WARN_AGE", line: "PASS_WARN_AGE   7" }
+    - { regexp: "^PASS_MIN_LEN",  line: "PASS_MIN_LEN    14" }
+  tags: [password, hardening]
+
+# ==============================
+# 4. Firewall Configuration
+# ==============================
+- name: "4. Install and configure firewall"
+  ansible.builtin.package:
+    name: ufw
+    state: present
+  when: ansible_os_family == "Debian"
+  tags: [firewall]
+
+- name: "4a. Allow SSH through firewall"
+  community.general.ufw:
+    rule: allow
+    port: "22"
+    proto: tcp
+  when: ansible_os_family == "Debian"
+  tags: [firewall, ssh]
+
+- name: "4b. Enable firewall"
+  community.general.ufw:
+    state: enabled
+    policy: deny
+  when: ansible_os_family == "Debian"
+  tags: [firewall]
+
+# ==============================
+# 5. Disable Unused Services
+# ==============================
+- name: "5. Disable unnecessary services"
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: stopped
+    enabled: no
+  loop:
+    - telnet
+    - rsh
+    - rlogin
+  ignore_errors: yes  # Service may not exist
+  tags: [services, hardening]
+
+# ==============================
+# 6. Kernel Security Settings
+# ==============================
+- name: "6. Apply kernel security parameters"
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    sysctl_set: yes
+    state: present
+    reload: yes
+  loop:
+    # Prevent IP spoofing
+    - { name: net.ipv4.conf.all.rp_filter, value: "1" }
+    # Disable IP forwarding (unless this is a router)
+    - { name: net.ipv4.ip_forward, value: "0" }
+    # Disable ICMP broadcast responses
+    - { name: net.ipv4.icmp_echo_ignore_broadcasts, value: "1" }
+    # Enable SYN flood protection
+    - { name: net.ipv4.tcp_syncookies, value: "1" }
+  tags: [kernel, hardening]
+
+# ==============================
+# 7. File System Permissions
+# ==============================
+- name: "7. Set critical file permissions"
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /etc/passwd,  owner: root, group: root, mode: "0644" }
+    - { path: /etc/shadow,  owner: root, group: root, mode: "0640" }
+    - { path: /etc/group,   owner: root, group: root, mode: "0644" }
+    - { path: /etc/ssh,     owner: root, group: root, mode: "0755" }
+  tags: [permissions, hardening]
+
+# ==============================
+# Handlers (triggered by notify)
+# ==============================
+# NOTE: Handlers go in handlers/main.yml
